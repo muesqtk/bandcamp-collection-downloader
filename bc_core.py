@@ -64,7 +64,7 @@ except Exception:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 APP_NAME = "Bandcamp Collection Downloader"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 
 PROFILE_URL = "https://bandcamp.com/{username}"
 COLLECTION_API = "https://bandcamp.com/api/fancollection/1/collection_items"

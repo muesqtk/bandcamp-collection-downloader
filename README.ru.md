@@ -16,7 +16,7 @@
 Эндрю Слайса (Andrew Slice, 2022), распространяемом по лицензии MIT.
 
 Этот GUI является частью
-[моего форка ](https://github.com/muesqtk/bandcamp-downloader).
+[моего muesqtk](https://github.com/muesqtk/bandcamp-collection-downloader).
 
 Старый консольный скрипт `bandcamp-downloader.py` **удалён из этой
 GUI-сборки**. Оригинальный консольный инструмент по-прежнему доступен в

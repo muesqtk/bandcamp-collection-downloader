@@ -539,7 +539,7 @@ This application is based on the original bandcamp-downloader by Andrew Slice:
 https://github.com/easlice/bandcamp-downloader
 
 This GUI is part of the muesqtk fork:
-https://github.com/muesqtk/bandcamp-downloader
+https://github.com/muesqtk/bandcamp-collection-downloader
 
 The legacy command-line script has been removed from this GUI distribution.
 The upstream command-line tool is still available at the original repository.
@@ -628,7 +628,7 @@ Bandcamp хранит альбомы в ZIP-архиве, а отдельные 
 https://github.com/easlice/bandcamp-downloader
 
 Этот GUI является частью форка muesqtk:
-https://github.com/muesqtk/bandcamp-downloader
+https://github.com/muesqtk/bandcamp-collection-downloader
 
 Старый консольный скрипт удалён из этой GUI-сборки. Оригинальный
 командный инструмент по-прежнему доступен в исходном репозитории.
@@ -710,7 +710,7 @@ SOFTWARE.
         ttk.Button(
             footer, text="Проект на GitHub",
             command=lambda: webbrowser.open(
-                "https://github.com/muesqtk/bandcamp-downloader"
+                "https://github.com/muesqtk/bandcamp-collection-downloader"
             ),
         ).pack(side="left", padx=(8, 0))
         ttk.Button(footer, text="Закрыть", command=self.destroy).pack(
