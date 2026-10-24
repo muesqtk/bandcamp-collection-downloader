@@ -16,7 +16,7 @@ This graphical application is based on the original
 Andrew Slice (2022), distributed under the MIT License.
 
 This GUI is part of the
-[muesqtk fork](https://github.com/muesqtk/bandcamp-downloader).
+[my fork](https://github.com/muesqtk/bandcamp-downloader).
 
 The legacy command-line script `bandcamp-downloader.py` has been **removed from
 this GUI distribution**. The original command-line tool is still available in
