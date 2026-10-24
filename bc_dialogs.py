@@ -539,7 +539,7 @@ This application is based on the original bandcamp-downloader by Andrew Slice:
 https://github.com/easlice/bandcamp-downloader
 
 This GUI is part of the muesqtk fork:
-https://github.com/muesqtk/bandcamp-collection-downloader
+https://github.com/muesqtk/bandcamp-downloader
 
 The legacy command-line script has been removed from this GUI distribution.
 The upstream command-line tool is still available at the original repository.
