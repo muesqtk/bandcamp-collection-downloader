@@ -628,7 +628,7 @@ Bandcamp хранит альбомы в ZIP-архиве, а отдельные 
 https://github.com/easlice/bandcamp-downloader
 
 Этот GUI является частью форка muesqtk:
-https://github.com/muesqtk/bandcamp-collection-downloader
+https://github.com/muesqtk/bandcamp-downloader
 
 Старый консольный скрипт удалён из этой GUI-сборки. Оригинальный
 командный инструмент по-прежнему доступен в исходном репозитории.
