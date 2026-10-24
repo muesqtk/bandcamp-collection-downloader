@@ -130,7 +130,7 @@ The app is fully translated into English and Russian.
 2. In the app's top bar, choose the browser under **Cookies from**. “Auto”
    tries browsers one by one.
 3. Enter your profile name: the part of the address after `bandcamp.com/`.
-   For example, for `https://bandcamp.com/maxim` enter `maxim`.
+   For example, for `https://bandcamp.com/user` enter `user`.
 4. Click **Load collection**.
 
 If automatic cookie import does not work:
