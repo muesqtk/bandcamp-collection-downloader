@@ -162,6 +162,17 @@ EN: dict[str, str] = {
     "Скачать выбранные ({count})": "Download selected ({count})",
     "Язык": "Language",
     "Язык интерфейса изменён: {language}.": "Interface language changed: {language}.",
+    "Тема:": "Theme:",
+    "Светлая": "Light",
+    "Тёмная": "Dark",
+    "Тема интерфейса изменена: {theme}.": "Interface theme changed: {theme}.",
+    "Тема интерфейса: {theme} (как в системе).":
+        "Interface theme: {theme} (following the system).",
+    "Светлая тема": "Light theme",
+    "Тёмная тема": "Dark theme",
+    "Системная тема": "System theme",
+    "Следовать теме системы (автоматически).":
+        "Follow the system theme (automatic).",
     "Сначала завершите текущую загрузку или проверку форматов.":
         "Finish the current download or format check first.",
     "Сначала загрузите коллекцию.": "Load the collection first.",

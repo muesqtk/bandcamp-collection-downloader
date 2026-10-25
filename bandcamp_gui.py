@@ -67,7 +67,7 @@ def main() -> int:
                 "Не удалось загрузить интерфейс приложения.\n\n"
                 "{error}\n\n"
                 "Убедитесь, что файлы bc_core.py, bc_ui.py, bc_actions.py, "
-                "bc_dialogs.py и bc_gui.py находятся рядом с этим файлом.",
+                "bc_dialogs.py, bc_theme.py и bc_gui.py находятся рядом с этим файлом.",
                 error=exc,
             ),
         )

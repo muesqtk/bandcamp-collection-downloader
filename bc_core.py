@@ -23,7 +23,13 @@ import time
 import traceback
 import urllib.parse
 import zipfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import OrderedDict
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from string import Formatter
@@ -64,7 +70,7 @@ except Exception:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 APP_NAME = "Bandcamp Collection Downloader"
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.2.0"
 
 PROFILE_URL = "https://bandcamp.com/{username}"
 COLLECTION_API = "https://bandcamp.com/api/fancollection/1/collection_items"
@@ -74,6 +80,12 @@ ART_URL = "https://f4.bcbits.com/img/a{art_id}_5.jpg"
 DEFAULT_TEMPLATE = "{artist}/{album}"
 MAX_PARALLEL = 16
 DEFAULT_THREADS = 4
+
+# Сколько страниц/скачиваний держать в кэше.  Раньше кэш рос без границ:
+# при коллекции из нескольких тысяч позиций в памяти оставались полные
+# JSON-данные каждой страницы (сотни мегабайт).
+PAGE_CACHE_ENTRIES = 3
+DOWNLOAD_CACHE_ENTRIES = 512
 
 FORMAT_EXTENSIONS = {
     "aac-hi": ".m4a",
@@ -218,7 +230,7 @@ class CancelledError(Exception):
 # Данные
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(slots=True)
 class CollectionItem:
     key: str
     item_id: int
@@ -266,14 +278,14 @@ class CollectionItem:
         return tr("Альбом") if self.is_album else tr("Трек")
 
 
-@dataclass
+@dataclass(slots=True)
 class DownloadInfo:
     downloads: dict[str, dict[str, Any]] = field(default_factory=dict)
     artist: str = ""
     title: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class DownloadOptions:
     fmt: str = "mp3-320"
     out_dir: Path = field(default_factory=lambda: Path("."))
@@ -646,8 +658,18 @@ class HttpClient:
         self.cookie_tuples: list[tuple[str, str, str, str]] = []
         self._lock = threading.RLock()
         self._session = self._new_session()
-        self._cache: dict[tuple[str, str], Any] = {}
-        self._dl_cache: dict[tuple[str, Optional[int]], DownloadInfo] = {}
+        # Ограниченные LRU-кэши: полные JSON-страницы Bandcamp бывают
+        # очень большими, поэтому храним лишь несколько последних.
+        self._cache: OrderedDict[tuple[str, str], Any] = OrderedDict()
+        self._dl_cache: OrderedDict[
+            tuple[str, Optional[int]], DownloadInfo
+        ] = OrderedDict()
+
+    def clear_caches(self) -> None:
+        """Освобождает сетевые кэши (например, перед новой коллекцией)."""
+        with self._lock:
+            self._cache.clear()
+            self._dl_cache.clear()
 
     # -- сессия ------------------------------------------------------------
 
@@ -831,11 +853,27 @@ class HttpClient:
 
     # -- страницы ----------------------------------------------------------
 
-    def get_page_data(self, url: str) -> dict:
+    def get_page_data(
+        self,
+        url: str,
+        *,
+        keys: Optional[tuple[str, ...]] = None,
+        cache: bool = True,
+    ) -> dict:
+        """Загружает и разбирает ``data-blob`` страницы Bandcamp.
+
+        ``keys`` позволяет оставить в результате только нужные разделы —
+        это заметно экономит память на больших страницах.  ``cache=False``
+        используется для страниц покупок: их тысячи, и хранить их целиком
+        в памяти нельзя.
+        """
         cache_key = ("page", url)
-        with self._lock:
-            if cache_key in self._cache:
-                return self._cache[cache_key]
+        if cache:
+            with self._lock:
+                cached = self._cache.get(cache_key)
+                if cached is not None:
+                    self._cache.move_to_end(cache_key)
+                    return cached
 
         if BeautifulSoup is None:
             raise BandcampError(
@@ -884,8 +922,14 @@ class HttpClient:
             raise BandcampError(
                 tr("Неожиданный формат данных Bandcamp.")
             )
-        with self._lock:
-            self._cache[cache_key] = data
+        if keys:
+            data = {key: data.get(key) for key in keys if key in data}
+        if cache:
+            with self._lock:
+                self._cache[cache_key] = data
+                self._cache.move_to_end(cache_key)
+                while len(self._cache) > PAGE_CACHE_ENTRIES:
+                    self._cache.popitem(last=False)
         return data
 
     # -- коллекция ---------------------------------------------------------
@@ -906,7 +950,17 @@ class HttpClient:
         self._log(
             tr("Открываю профиль {profile} …", profile=profile), "debug"
         )
-        data = self.get_page_data(profile)
+        data = self.get_page_data(
+            profile,
+            keys=(
+                "fan_data",
+                "current_fan",
+                "collection_data",
+                "item_cache",
+                "hidden_data",
+            ),
+            cache=False,
+        )
 
         fan = data.get("fan_data") or {}
         if not fan or "fan_id" not in fan:
@@ -946,15 +1000,29 @@ class HttpClient:
         cached = item_cache.get("collection") or {}
         if not isinstance(cached, dict):
             cached = {}
+        hidden_data = (
+            (data.get("hidden_data") or {}) if include_hidden else {}
+        )
+        hidden_cache = (
+            (item_cache.get("hidden") or {}) if include_hidden else {}
+        )
+        if not isinstance(hidden_cache, dict):
+            hidden_cache = {}
+        # Полные JSON-структуры профиля больше не нужны: освобождаем их
+        # до постраничной загрузки, чтобы не держать в памяти два раза.
+        del data, item_cache
 
         items_map, skipped = self._merge_items(list(cached.values()), redownload_urls)
+        cached_count = len(cached)
+        cached.clear()
+        del cached
         total = int(collection_data.get("item_count") or 0)
         if progress:
             progress(len(items_map), total or len(items_map))
 
-        if total > len(cached):
+        if total > cached_count:
             token = collection_data.get("last_token") or ""
-            remaining = total - len(cached)
+            remaining = total - cached_count
             seen_tokens = {token}
             while remaining > 0 and token:
                 page = self._fetch_collection_page(
@@ -983,19 +1051,17 @@ class HttpClient:
                     progress(len(items_map), total)
 
         if include_hidden:
-            hidden_data = data.get("hidden_data") or {}
-            hidden_cache = item_cache.get("hidden") or {}
-            if not isinstance(hidden_cache, dict):
-                hidden_cache = {}
             merged, hidden_skipped = self._merge_items(
                 list(hidden_cache.values()), redownload_urls
             )
             items_map.update(merged)
             skipped += hidden_skipped
+            hidden_count = len(hidden_cache)
+            hidden_cache.clear()
             hidden_total = int(hidden_data.get("item_count") or 0)
-            if hidden_total > len(hidden_cache):
+            if hidden_total > hidden_count:
                 token = hidden_data.get("last_token") or ""
-                remaining = hidden_total - len(hidden_cache)
+                remaining = hidden_total - hidden_count
                 seen_tokens = {token}
                 while remaining > 0 and token:
                     page = self._fetch_collection_page(
@@ -1127,10 +1193,14 @@ class HttpClient:
         cache_key = (redownload_url, item_id)
         with self._lock:
             cached = self._dl_cache.get(cache_key)
+            if cached is not None:
+                self._dl_cache.move_to_end(cache_key)
         if cached is not None:
             return cached
 
-        data = self.get_page_data(redownload_url)
+        data = self.get_page_data(
+            redownload_url, keys=("download_items",), cache=False
+        )
         download_items = data.get("download_items") or []
         if not isinstance(download_items, list) or not download_items:
             raise BandcampError(
@@ -1192,6 +1262,9 @@ class HttpClient:
         )
         with self._lock:
             self._dl_cache[cache_key] = info
+            self._dl_cache.move_to_end(cache_key)
+            while len(self._dl_cache) > DOWNLOAD_CACHE_ENTRIES:
+                self._dl_cache.popitem(last=False)
         return info
 
 
@@ -1552,6 +1625,9 @@ class DownloadJob:
             payload["size"] = int(size)
         if formats is not None:
             payload["formats"] = list(formats)
+        if state in ("done", "error", "skipped", "exists", "cancelled",
+                     "unavailable"):
+            self._last_progress.pop(item.key, None)
         self.emit("item_status", payload)
 
     def _progress(self, item: CollectionItem, done: int, total: int) -> None:
@@ -1592,21 +1668,51 @@ class DownloadJob:
         self.emit("job_started", {"total": self.total})
         try:
             workers = max(1, min(MAX_PARALLEL, int(self.options.threads)))
+            # Держим в очереди лишь небольшое окно задач: при коллекции
+            # из тысяч позиций создавать все Future сразу расточительно.
+            window = max(workers * 2, workers + 1)
+            pending: dict[Future, CollectionItem] = {}
+            iterator = iter(self.items)
+            exhausted = False
+            cancelled_rest = False
+
+            def submit_next() -> bool:
+                nonlocal exhausted
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    exhausted = True
+                    return False
+                pending[executor.submit(self._one, item)] = item
+                return True
+
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(self._one, item): item for item in self.items
-                }
-                for future in as_completed(futures):
-                    item = futures[future]
-                    try:
-                        future.result()
-                    except CancelledError:
-                        self._state(item, "cancelled", tr("Отменено"))
-                    except Exception as exc:  # страховка
-                        self._state(item, "error", str(exc)[:300])
-                        self._log(
-                            f"{item.artist} — {item.title}: {exc}", "error"
-                        )
+                for _ in range(window):
+                    if not submit_next():
+                        break
+                while pending:
+                    done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+                    for future in done:
+                        item = pending.pop(future)
+                        try:
+                            future.result()
+                        except CancelledError:
+                            self._state(item, "cancelled", tr("Отменено"))
+                        except Exception as exc:  # страховка
+                            self._state(item, "error", str(exc)[:300])
+                            self._log(
+                                f"{item.artist} — {item.title}: {exc}", "error"
+                            )
+                    if self.cancelled and not cancelled_rest:
+                        # Не запускаем остальные задачи: сразу помечаем их
+                        # отменёнными, чтобы загрузка завершилась быстро.
+                        cancelled_rest = True
+                        for item in iterator:
+                            self._state(item, "cancelled", tr("Отменено"))
+                        exhausted = True
+                    while not exhausted and len(pending) < window:
+                        if not submit_next():
+                            break
         finally:
             self.emit(
                 "job_finished",
