@@ -45,6 +45,8 @@ same legal scope: only content you purchased on Bandcamp.
 * Cookies are read from a browser or pasted manually; they are **kept in memory
   only and never written to disk**.
 * Instant English/Russian interface switching from the title bar.
+* Light and dark themes, selected manually or following the system theme.
+* Low memory usage even with collections of several thousand items.
 
 ## Requirements
 
@@ -122,6 +124,21 @@ The app is fully translated into English and Russian.
   language for a launch.
 * The complete English and Russian Help text (including attribution, license and
   usage instructions) is available from the **Help** button.
+
+## Interface theme
+
+The theme selector is next to the language selector in the top-right corner:
+
+* **Auto** follows the system theme. On Windows the app reads
+  `AppsUseLightTheme`, on macOS `AppleInterfaceStyle`, and on Linux the
+  GTK/GNOME settings (`color-scheme` / `gtk-theme`). System theme changes are
+  picked up automatically without a restart.
+* **Light** and **Dark** force the theme regardless of the system.
+* The choice is stored in `settings.json` and restored on the next launch.
+* Switching is disabled while a download or format check is running, so the
+  table is not rebuilt mid-update.
+* In unusual environments without DBus you can set `BC_THEME=dark` or
+  `BC_THEME=light`.
 
 ## Signing in to Bandcamp
 
@@ -216,7 +233,8 @@ Set `BCD_CONFIG_DIR` to use a different settings directory (useful for tests and
 portable setups).
 
 Settings contain only UI/download preferences: profile, format, folder,
-template, threads, proxy, language and checkboxes. **Cookies are never stored.**
+template, threads, proxy, language, theme and checkboxes. **Cookies are never
+stored.**
 
 ## Building the Windows executable
 
@@ -296,6 +314,7 @@ bc_ui.py                 interface, table, settings, log
 bc_actions.py            network actions, cookies, downloads, events
 bc_core.py               HTTP, collection, formats, ZIP, DownloadJob
 bc_dialogs.py            sign-in, advanced settings, Help and license
+bc_theme.py              light/dark palettes and system theme detection
 bc_i18n.py               Russian source strings and English translation
 bc_localize.py           static widget-tree localization helper
 requirements.txt         runtime dependencies

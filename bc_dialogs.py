@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import bc_core as core
+import bc_theme
 from bc_i18n import get_language, tr
 from bc_localize import localize_widgets
 
@@ -35,7 +36,7 @@ class LoginDialog(tk.Toplevel):
         super().__init__(parent)
         self.app = app
         self.title(tr("Вход в Bandcamp"))
-        self.configure(bg="#f3f5f7")
+        self.configure(bg=bc_theme.color("bg"))
         self.transient(parent)
         self.resizable(True, True)
         self.minsize(560, 480)
@@ -126,11 +127,14 @@ class LoginDialog(tk.Toplevel):
             height=7,
             wrap="word",
             font=("Consolas", 9),
-            bg="#ffffff",
-            fg="#1f2937",
+            bg=bc_theme.color("card"),
+            fg=bc_theme.color("text"),
+            insertbackground=bc_theme.color("text"),
+            selectbackground=bc_theme.color("select_bg"),
+            selectforeground=bc_theme.color("select_fg"),
             relief="flat",
             highlightthickness=1,
-            highlightbackground="#d8dee6",
+            highlightbackground=bc_theme.color("border"),
             padx=8,
             pady=6,
         )
@@ -297,7 +301,7 @@ class AdvancedDialog(tk.Toplevel):
         super().__init__(parent)
         self.app = app
         self.title(tr("Дополнительные параметры"))
-        self.configure(bg="#f3f5f7")
+        self.configure(bg=bc_theme.color("bg"))
         self.transient(parent)
         self.grab_set()
         self.resizable(True, False)
@@ -533,6 +537,12 @@ Language
 Use the language selector in the top-right corner. The interface can be switched
 between English and Russian instantly when no download or format check is active.
 
+Theme
+
+The theme selector is next to the language selector. “Auto” follows the system
+theme (Windows, macOS, GNOME/GTK, KDE); “Light” and “Dark” force it manually.
+The choice is stored in settings.json.
+
 Project and attribution
 
 This application is based on the original bandcamp-downloader by Andrew Slice:
@@ -622,6 +632,12 @@ Bandcamp хранит альбомы в ZIP-архиве, а отдельные 
 мгновенно переключить между английским и русским, если не идёт загрузка
 или проверка форматов.
 
+Тема
+
+Переключатель темы находится рядом с языком. «Авто» следует теме системы
+(Windows, macOS, GNOME/GTK, KDE), «Светлая» и «Тёмная» задают её вручную.
+Выбор сохраняется в settings.json.
+
 Проект и авторство
 
 Приложение основано на оригинальном bandcamp-downloader Эндрю Слайса:
@@ -660,7 +676,7 @@ SOFTWARE.
     def __init__(self, parent: tk.Misc):
         super().__init__(parent)
         self.title(tr("Справка"))
-        self.configure(bg="#f3f5f7")
+        self.configure(bg=bc_theme.color("bg"))
         self.transient(parent)
         self.minsize(680, 560)
 
@@ -681,11 +697,14 @@ SOFTWARE.
             text_wrap,
             wrap="word",
             font=("Segoe UI", 9),
-            bg="#ffffff",
-            fg="#1f2937",
+            bg=bc_theme.color("card"),
+            fg=bc_theme.color("text"),
+            insertbackground=bc_theme.color("text"),
+            selectbackground=bc_theme.color("select_bg"),
+            selectforeground=bc_theme.color("select_fg"),
             relief="flat",
             highlightthickness=1,
-            highlightbackground="#d8dee6",
+            highlightbackground=bc_theme.color("border"),
             padx=12,
             pady=10,
         )

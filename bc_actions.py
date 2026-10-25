@@ -112,6 +112,10 @@ class ActionMixin:
             need_cookies = True
 
         self._loading = True
+        try:
+            client.clear_caches()
+        except Exception:
+            pass
         self._set_status(tr("Загрузка коллекции…"))
         self._sync_action_buttons()
         try:
@@ -202,12 +206,13 @@ class ActionMixin:
             pass
         self.progress.configure(mode="determinate", value=0)
 
-        self.items = list(items)
+        self.items = items
         self.items_by_key = {item.key: item for item in self.items}
         for item in self.items:
             item.selected = True
 
         self._preview_key = None
+        self._clear_art_cache()
         self._show_preview(None)
         self._mark_existing(self.items)
         self._rebuild_tree()

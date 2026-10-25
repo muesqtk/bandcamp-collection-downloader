@@ -13,7 +13,7 @@ import sys
 import time
 import traceback
 import webbrowser
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import bc_core as core
+import bc_theme
 from bc_dialogs import AdvancedDialog, HelpDialog, LoginDialog
 from bc_i18n import (
     LANGUAGE_BY_LABEL,
@@ -43,14 +44,40 @@ except Exception:  # pragma: no cover
 # Оформление
 # ---------------------------------------------------------------------------
 
-BG = "#f3f5f7"
-CARD = "#ffffff"
-BORDER = "#d8dee6"
-TEXT = "#1f2937"
-MUTED = "#667085"
-ACCENT = "#1a9ec4"
-ACCENT_DARK = "#1582a2"
-SOFT = "#e9edf2"
+# Значения ниже синхронизируются с текущей палитрой при смене темы.
+BG = ""
+CARD = ""
+BORDER = ""
+TEXT = ""
+MUTED = ""
+ACCENT = ""
+ACCENT_DARK = ""
+SOFT = ""
+
+# Ограничения кэша обложек: превью хранятся как сжатые JPEG (несколько
+# десятков килобайт), но при просмотре тысяч позиций кэш всё равно нужно
+# ограничивать по объёму, а не только по количеству.
+ART_CACHE_MAX_BYTES = 12 * 1024 * 1024
+ART_CACHE_MAX_ITEMS = 120
+
+THEME_CHECK_INTERVAL_MS = 20000
+
+
+def _sync_theme_globals() -> None:
+    """Подхватывает цвета текущей палитры в глобальные константы."""
+    global BG, CARD, BORDER, TEXT, MUTED, ACCENT, ACCENT_DARK, SOFT
+    palette = bc_theme.palette()
+    BG = palette["bg"]
+    CARD = palette["card"]
+    BORDER = palette["border"]
+    TEXT = palette["text"]
+    MUTED = palette["muted"]
+    ACCENT = palette["accent"]
+    ACCENT_DARK = palette["accent_dark"]
+    SOFT = palette["soft"]
+
+
+_sync_theme_globals()
 
 TERMINAL_STATES = {"done", "error", "skipped", "exists", "cancelled", "unavailable"}
 
@@ -112,7 +139,8 @@ class Tooltip:
         tip.wm_overrideredirect(True)
         tip.wm_geometry(f"+{x}+{y}")
         label = tk.Label(
-            tip, text=self.text, justify="left", bg="#1f2937", fg="#ffffff",
+            tip, text=self.text, justify="left",
+            bg=bc_theme.color("tooltip_bg"), fg=bc_theme.color("tooltip_fg"),
             font=("Segoe UI", 9), padx=8, pady=5, wraplength=360,
         )
         label.pack()
@@ -136,6 +164,8 @@ class AppBase:
         self._closing = False
         self._settings = self._load_settings_file()
         set_language(load_saved_language(self._settings_path()))
+        bc_theme.set_mode(self._settings.get("theme", bc_theme.THEME_AUTO))
+        _sync_theme_globals()
         self._queue: queue.Queue = queue.Queue()
 
         self.client = None
@@ -177,7 +207,8 @@ class AppBase:
         self.notify_var = tk.BooleanVar(value=True)
 
         self._art_token = 0
-        self._art_cache: dict[int, bytes] = {}
+        self._art_cache: OrderedDict[int, bytes] = OrderedDict()
+        self._art_cache_bytes = 0
         self._photo = None
         self._art_pool = _ArtPool()
 
@@ -208,6 +239,7 @@ class AppBase:
         self.root.after(80, self._poll_queue)
         self.root.after(300, self._set_sash)
         self.root.after(500, self._startup_log)
+        self.root.after(THEME_CHECK_INTERVAL_MS, self._poll_system_theme)
         self._sync_extract_controls()
         self._sync_action_buttons()
         self._update_cookie_status()
@@ -261,11 +293,13 @@ class AppBase:
             "attempts": self.attempts_var.get().strip(),
             "retry_wait": self.retry_wait_var.get().strip(),
             "language": get_language(),
+            "theme": bc_theme.get_mode(),
         }
         try:
             data["geometry"] = self.root.geometry()
         except tk.TclError:
             pass
+        self._settings = data
         path = self._settings_path()
         try:
             tmp = path.with_suffix(".tmp")
@@ -314,6 +348,17 @@ class AppBase:
         self.root.geometry(self._fit_geometry(geometry))
         if hasattr(self, "language_var"):
             self.language_var.set(language_label(get_language()))
+        if hasattr(self, "theme_var"):
+            self.theme_var.set(self._theme_label(bc_theme.get_mode()))
+
+    @staticmethod
+    def _theme_label(mode: str) -> str:
+        return tr(bc_theme.THEME_LABELS.get(mode, "Авто"))
+
+    def _theme_mode_by_label(self) -> dict[str, str]:
+        return {
+            self._theme_label(mode): mode for mode in bc_theme.THEMES
+        }
 
     def _fit_geometry(self, geometry: str | None) -> str:
         """Подгоняет окно под экран, не давая ему уйти за границы."""
@@ -351,6 +396,17 @@ class AppBase:
         except tk.TclError:
             pass
 
+        # Выпадающие списки ttk не наследуют цвета из style.configure,
+        # поэтому задаём их через опции Tk.
+        try:
+            self.root.option_add("*TCombobox*Listbox.background", CARD)
+            self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
+            self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+            self.root.option_add("*TCombobox*Listbox.selectForeground",
+                                bc_theme.color("accent_text"))
+        except tk.TclError:
+            pass
+
         base_font = ("Segoe UI", 10)
         small = ("Segoe UI", 9)
         bold = ("Segoe UI", 10, "bold")
@@ -374,7 +430,8 @@ class AppBase:
                         font=bold)
         style.configure("Muted.TLabel", background=BG, foreground=MUTED,
                         font=small)
-        style.configure("Empty.TLabel", background=CARD, foreground="#98a2b3",
+        style.configure("Empty.TLabel", background=CARD,
+                        foreground=bc_theme.color("empty_fg"),
                         font=("Segoe UI", 11))
         style.configure("Status.TLabel", background=SOFT, foreground=MUTED,
                         font=small)
@@ -383,16 +440,19 @@ class AppBase:
                         focusthickness=0, padding=(11, 5), font=base_font)
         style.map(
             "TButton",
-            background=[("active", "#eef2f6"), ("disabled", "#f1f3f5")],
-            foreground=[("disabled", "#a0a8b3")],
+            background=[("active", bc_theme.color("button_active")),
+                        ("disabled", bc_theme.color("button_disabled"))],
+            foreground=[("disabled", bc_theme.color("button_disabled_fg"))],
         )
-        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
+        style.configure("Accent.TButton", background=ACCENT,
+                        foreground=bc_theme.color("accent_text"),
                         bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
                         font=("Segoe UI", 10, "bold"), padding=(14, 6))
         style.map(
             "Accent.TButton",
-            background=[("active", ACCENT_DARK), ("disabled", "#a9d6e4")],
-            foreground=[("disabled", "#ffffff")],
+            background=[("active", ACCENT_DARK),
+                        ("disabled", bc_theme.color("accent_disabled"))],
+            foreground=[("disabled", bc_theme.color("accent_text"))],
         )
         style.configure("TCheckbutton", background=BG, foreground=TEXT,
                         font=base_font, focusthickness=0)
@@ -421,17 +481,20 @@ class AppBase:
                         foreground=TEXT, rowheight=27, borderwidth=0,
                         font=("Segoe UI", 9))
         style.configure(
-            "Treeview.Heading", background="#f0f3f7", foreground="#475467",
+            "Treeview.Heading", background=bc_theme.color("heading_bg"),
+            foreground=bc_theme.color("heading_fg"),
             relief="flat", font=("Segoe UI", 9, "bold"), padding=(6, 7),
         )
         style.map(
             "Treeview",
-            background=[("selected", "#d9edf6")],
-            foreground=[("selected", "#0b2530")],
+            background=[("selected", bc_theme.color("select_bg"))],
+            foreground=[("selected", bc_theme.color("select_fg"))],
         )
-        style.map("Treeview.Heading", background=[("active", "#e6ebf1")])
+        style.map("Treeview.Heading",
+                  background=[("active", bc_theme.color("heading_active"))])
         style.configure(
-            "Horizontal.TProgressbar", troughcolor="#e2e7ee", background=ACCENT,
+            "Horizontal.TProgressbar",
+            troughcolor=bc_theme.color("progress_trough"), background=ACCENT,
             bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT, thickness=9,
         )
         style.configure("TSeparator", background=BORDER)
@@ -502,6 +565,26 @@ class AppBase:
         self.language_combo.pack(side="left", padx=(0, 12))
         self.language_combo.bind("<<ComboboxSelected>>",
                                  self._on_language_changed)
+        ttk.Label(
+            top_right, text=tr("Тема:"), style="HeaderMuted.TLabel"
+        ).pack(side="left", padx=(0, 5))
+        self.theme_var = tk.StringVar(
+            value=self._theme_label(bc_theme.get_mode())
+        )
+        self.theme_combo = ttk.Combobox(
+            top_right,
+            textvariable=self.theme_var,
+            values=[self._theme_label(mode) for mode in bc_theme.THEMES],
+            state="readonly",
+            width=9,
+        )
+        self.theme_combo.pack(side="left", padx=(0, 12))
+        self.theme_combo.bind("<<ComboboxSelected>>",
+                              self._on_theme_changed)
+        Tooltip(
+            self.theme_combo,
+            tr("Следовать теме системы (автоматически)."),
+        )
         ttk.Button(top_right, text="Справка", command=self._open_help).pack(
             side="left"
         )
@@ -668,14 +751,27 @@ class AppBase:
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         self.tree.tag_configure("even", background=CARD, foreground=TEXT)
-        self.tree.tag_configure("odd", background="#fafbfc", foreground=TEXT)
-        self.tree.tag_configure("done", background="#eef9f2", foreground="#0b6b3a")
-        self.tree.tag_configure("error", background="#fdf2f2", foreground="#b42318")
-        self.tree.tag_configure("working", background="#eef5fd", foreground="#0b5cad")
-        self.tree.tag_configure("skipped", background="#f6f7f8", foreground=MUTED)
-        self.tree.tag_configure("exists", background="#f6f7f8", foreground=MUTED)
-        self.tree.tag_configure("warning", background="#fdf8ec", foreground="#9a6700")
-        self.tree.tag_configure("queued", background="#f2f7fd", foreground="#475467")
+        self.tree.tag_configure("odd", background=bc_theme.color("row_odd"),
+                                foreground=TEXT)
+        self.tree.tag_configure("done", background=bc_theme.color("done_bg"),
+                                foreground=bc_theme.color("done_fg"))
+        self.tree.tag_configure("error", background=bc_theme.color("error_bg"),
+                                foreground=bc_theme.color("error_fg"))
+        self.tree.tag_configure("working",
+                                background=bc_theme.color("working_bg"),
+                                foreground=bc_theme.color("working_fg"))
+        self.tree.tag_configure("skipped",
+                                background=bc_theme.color("skipped_bg"),
+                                foreground=MUTED)
+        self.tree.tag_configure("exists",
+                                background=bc_theme.color("skipped_bg"),
+                                foreground=MUTED)
+        self.tree.tag_configure("warning",
+                                background=bc_theme.color("warning_bg"),
+                                foreground=bc_theme.color("warning_fg"))
+        self.tree.tag_configure("queued",
+                                background=bc_theme.color("queued_bg"),
+                                foreground=bc_theme.color("queued_fg"))
 
         self.tree.bind("<Button-1>", self._on_tree_click)
         self.tree.bind("<Double-1>", self._on_tree_double)
@@ -701,11 +797,13 @@ class AppBase:
         inner = tk.Frame(card, bg=CARD, padx=12, pady=12)
         inner.pack(fill="both", expand=True)
 
-        art_holder = tk.Frame(inner, bg="#eef2f6", width=160, height=160)
+        art_holder = tk.Frame(inner, bg=bc_theme.color("art_holder"),
+                              width=160, height=160)
         art_holder.pack()
         art_holder.pack_propagate(False)
         self.art_label = tk.Label(
-            art_holder, bg="#eef2f6", fg="#98a2b3", text="♪",
+            art_holder, bg=bc_theme.color("art_holder"),
+            fg=bc_theme.color("empty_fg"), text="♪",
             font=("Segoe UI", 34),
         )
         self.art_label.pack(fill="both", expand=True)
@@ -732,7 +830,7 @@ class AppBase:
         )
         self.preview_formats.pack(fill="x", pady=(6, 0))
         self.preview_link = tk.Label(
-            inner, text="", bg=CARD, fg="#157b99",
+            inner, text="", bg=CARD, fg=bc_theme.color("link"),
             font=("Segoe UI", 9, "underline"), cursor="hand2",
             anchor="w", justify="left",
         )
@@ -767,6 +865,8 @@ class AppBase:
             wrap, height=7, wrap="word", font=("Consolas", 9),
             bg=CARD, fg=TEXT, relief="flat", highlightthickness=1,
             highlightbackground=BORDER, padx=10, pady=8,
+            insertbackground=TEXT, selectbackground=bc_theme.color("select_bg"),
+            selectforeground=bc_theme.color("select_fg"),
             state="disabled",
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
@@ -774,11 +874,11 @@ class AppBase:
                                   command=self.log_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=scrollbar.set)
-        self.log_text.tag_configure("info", foreground="#374151")
-        self.log_text.tag_configure("ok", foreground="#047857")
-        self.log_text.tag_configure("warn", foreground="#b45309")
-        self.log_text.tag_configure("error", foreground="#b91c1c")
-        self.log_text.tag_configure("debug", foreground="#6b7280")
+        self.log_text.tag_configure("info", foreground=bc_theme.color("log_info"))
+        self.log_text.tag_configure("ok", foreground=bc_theme.color("log_ok"))
+        self.log_text.tag_configure("warn", foreground=bc_theme.color("log_warn"))
+        self.log_text.tag_configure("error", foreground=bc_theme.color("log_error"))
+        self.log_text.tag_configure("debug", foreground=bc_theme.color("log_debug"))
 
     def _build_settings(self) -> None:
         frame = ttk.LabelFrame(
@@ -902,10 +1002,11 @@ class AppBase:
         if not HAVE_PIL:
             return
         try:
+            accent = bc_theme.rgb("accent", (26, 158, 196))
             image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
             draw = ImageDraw.Draw(image)
             draw.rounded_rectangle((2, 2, 61, 61), radius=14,
-                                   fill=(26, 158, 196, 255))
+                                   fill=(*accent, 255))
             draw.rounded_rectangle((27, 14, 33, 43), radius=3,
                                    fill=(255, 255, 255, 255))
             draw.ellipse((18, 38, 33, 51), fill=(255, 255, 255, 255))
@@ -1097,10 +1198,26 @@ class AppBase:
         if not data:
             self._set_placeholder_art("♪")
             return
-        if len(self._art_cache) > 120:
-            self._art_cache.clear()
-        self._art_cache[art_id] = data
+        self._cache_art(art_id, data)
         self._render_art(data)
+
+    def _cache_art(self, art_id: int, data: bytes) -> None:
+        """Кладёт обложку в LRU-кэш, ограниченный по количеству и объёму."""
+        old = self._art_cache.pop(art_id, None)
+        if old is not None:
+            self._art_cache_bytes -= len(old)
+        self._art_cache[art_id] = data
+        self._art_cache_bytes += len(data)
+        while (
+            len(self._art_cache) > ART_CACHE_MAX_ITEMS
+            or self._art_cache_bytes > ART_CACHE_MAX_BYTES
+        ) and len(self._art_cache) > 1:
+            _old_id, old_data = self._art_cache.popitem(last=False)
+            self._art_cache_bytes -= len(old_data)
+
+    def _clear_art_cache(self) -> None:
+        self._art_cache.clear()
+        self._art_cache_bytes = 0
 
     def _set_placeholder_art(self, text: str = "♪") -> None:
         self._photo = None
@@ -1485,6 +1602,7 @@ class AppBase:
             return
         cached = self._art_cache.get(item.art_id)
         if cached:
+            self._art_cache.move_to_end(item.art_id)
             self._render_art(cached)
             return
         self._set_placeholder_art("♪")
@@ -1633,16 +1751,18 @@ class AppBase:
     def _open_help(self) -> None:
         HelpDialog(self.root)
 
-    def _on_language_changed(self, _event=None) -> None:
-        code = LANGUAGE_BY_LABEL.get(self.language_var.get(), "en")
-        if code == get_language():
-            return
-        busy = (
+    def _busy(self) -> bool:
+        return bool(
             self.job is not None
             or self._loading
             or self._formats_running
         )
-        if busy:
+
+    def _on_language_changed(self, _event=None) -> None:
+        code = LANGUAGE_BY_LABEL.get(self.language_var.get(), "en")
+        if code == get_language():
+            return
+        if self._busy():
             self.language_var.set(language_label(get_language()))
             messagebox.showwarning(
                 tr("Язык"),
@@ -1654,29 +1774,7 @@ class AppBase:
             return
         set_language(code)
         self._save_settings()
-        self._rebuild_for_language()
-
-    def _rebuild_for_language(self) -> None:
-        username = self.username_var.get().strip()
-        preview_key = self._preview_key
-        for child in list(self.root.winfo_children()):
-            try:
-                child.destroy()
-            except tk.TclError:
-                pass
-        self._build_choice_maps()
-        self._build_style()
-        self._build_ui()
-        self._apply_settings()
-        self.root.title(
-            f"{username} — {core.APP_NAME}" if username else core.APP_NAME
-        )
-        self._rebuild_tree()
-        self._show_preview(preview_key)
-        self._sync_extract_controls()
-        self._sync_action_buttons()
-        self._update_cookie_status()
-        self.root.after(300, self._set_sash)
+        self._rebuild_ui()
         self._append_log(
             tr(
                 "Язык интерфейса изменён: {language}.",
@@ -1684,6 +1782,136 @@ class AppBase:
             ),
             "info",
         )
+
+    def _on_theme_changed(self, _event=None) -> None:
+        mode = self._theme_mode_by_label().get(
+            self.theme_var.get(), bc_theme.THEME_AUTO
+        )
+        if mode == bc_theme.get_mode():
+            return
+        if self._busy():
+            self.theme_var.set(self._theme_label(bc_theme.get_mode()))
+            messagebox.showwarning(
+                tr("Тема:"),
+                tr(
+                    "Сначала завершите текущую загрузку или проверку форматов."
+                ),
+                parent=self.root,
+            )
+            return
+        bc_theme.set_mode(mode)
+        self._save_settings()
+        self._rebuild_ui()
+        self._append_log(
+            tr(
+                "Тема интерфейса изменена: {theme}.",
+                theme=self._theme_name(mode),
+            ),
+            "info",
+        )
+
+    def _theme_name(self, mode: str | None = None) -> str:
+        mode = bc_theme.normalize_mode(mode if mode is not None
+                                       else bc_theme.get_mode())
+        if mode == bc_theme.THEME_AUTO:
+            return (
+                tr("Системная тема") + " · "
+                + self._theme_label(bc_theme.get_resolved())
+            )
+        return self._theme_label(mode)
+
+    def _has_open_dialog(self) -> bool:
+        try:
+            return any(
+                isinstance(child, tk.Toplevel)
+                for child in self.root.winfo_children()
+            )
+        except tk.TclError:
+            return False
+
+    def _poll_system_theme(self) -> None:
+        """Следит за сменой системной темы в режиме «Авто»."""
+        if self._closing:
+            return
+        try:
+            if (
+                bc_theme.get_mode() == bc_theme.THEME_AUTO
+                and not self._busy()
+                and not self._has_open_dialog()
+                and bc_theme.refresh()
+            ):
+                self._rebuild_ui()
+                self._append_log(
+                    tr(
+                        "Тема интерфейса: {theme} (как в системе).",
+                        theme=self._theme_label(bc_theme.get_resolved()),
+                    ),
+                    "info",
+                )
+        except Exception:
+            pass
+        finally:
+            try:
+                self.root.after(THEME_CHECK_INTERVAL_MS,
+                                self._poll_system_theme)
+            except tk.TclError:
+                pass
+
+    def _rebuild_ui(self) -> None:
+        """Пересоздаёт интерфейс, сохраняя данные и текущее состояние."""
+        username = self.username_var.get().strip()
+        preview_key = self._preview_key
+        try:
+            log_content = self.log_text.get("1.0", "end-1c")
+        except tk.TclError:
+            log_content = ""
+        try:
+            status_text = self.status_var.get()
+        except (AttributeError, tk.TclError):
+            status_text = ""
+        try:
+            current_geometry = self.root.geometry()
+        except tk.TclError:
+            current_geometry = None
+
+        for child in list(self.root.winfo_children()):
+            try:
+                child.destroy()
+            except tk.TclError:
+                pass
+
+        _sync_theme_globals()
+        self._build_choice_maps()
+        self._build_style()
+        self._build_ui()
+        self._apply_settings()
+        if current_geometry:
+            try:
+                self.root.geometry(self._fit_geometry(current_geometry))
+            except tk.TclError:
+                pass
+        self.root.title(
+            f"{username} — {core.APP_NAME}" if username else core.APP_NAME
+        )
+        if log_content:
+            try:
+                self.log_text.configure(state="normal")
+                self.log_text.insert("1.0", log_content + "\n")
+                lines = int(self.log_text.index("end-1c").split(".")[0])
+                if lines > 3000:
+                    self.log_text.delete("1.0", f"{lines - 2200}.0")
+                self.log_text.configure(state="disabled")
+                self.log_text.see("end")
+            except tk.TclError:
+                pass
+        if status_text:
+            self._set_status(status_text)
+        self._rebuild_tree()
+        self._show_preview(preview_key)
+        self._sync_extract_controls()
+        self._sync_action_buttons()
+        self._update_cookie_status()
+        self.root.after(300, self._set_sash)
 
 
 class _ArtPool:
