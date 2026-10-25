@@ -463,6 +463,11 @@ class AppBase:
         style.configure("TEntry", fieldbackground=CARD, foreground=TEXT,
                         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
                         padding=5, insertcolor=TEXT)
+        style.map(
+            "TEntry",
+            fieldbackground=[("disabled", SOFT)],
+            foreground=[("disabled", MUTED)],
+        )
         style.configure("TCombobox", fieldbackground=CARD, background=CARD,
                         foreground=TEXT, arrowsize=14, padding=4)
         style.map(
@@ -472,7 +477,18 @@ class AppBase:
             selectforeground=[("readonly", TEXT)],
         )
         style.configure("TSpinbox", fieldbackground=CARD, foreground=TEXT,
-                        bordercolor=BORDER, arrowsize=12, padding=4)
+                        bordercolor=BORDER, arrowsize=12, padding=4,
+                        arrowcolor=MUTED, insertcolor=TEXT)
+        for orient in ("Vertical", "Horizontal"):
+            style.configure(
+                f"{orient}.TScrollbar",
+                background=BORDER, troughcolor=BG, bordercolor=BG,
+                arrowcolor=MUTED, lightcolor=BORDER, darkcolor=BORDER,
+            )
+            style.map(
+                f"{orient}.TScrollbar",
+                background=[("active", MUTED)],
+            )
         style.configure("TLabelframe", background=BG, bordercolor=BORDER,
                         relief="solid", borderwidth=1)
         style.configure("TLabelframe.Label", background=BG, foreground=TEXT,
